@@ -1,0 +1,575 @@
+-- =========================================================
+-- Conectar por JobId — Design NEON GLASS REFLECTIVE
+-- HOME = Ativar | END = Desativar
+-- =========================================================
+if not game:IsLoaded() then game.Loaded:Wait() end
+
+local Players          = game:GetService("Players")
+local UIS              = game:GetService("UserInputService")
+local TeleportService  = game:GetService("TeleportService")
+local TweenService     = game:GetService("TweenService")
+local RunService       = game:GetService("RunService")
+local Player           = Players.LocalPlayer
+local PlayerGui        = Player:WaitForChild("PlayerGui")
+
+local guiAtiva, ScreenGui, BotaoMobile = false, nil, nil
+local conexoes = {}  -- guarda loops pra limpar depois
+
+-- =========================================================
+-- Paleta NEON
+-- =========================================================
+local COR = {
+    fundo         = Color3.fromRGB(12, 12, 20),
+    fundoGlass    = Color3.fromRGB(28, 30, 45),
+    neonCiano     = Color3.fromRGB(0, 240, 255),
+    neonRosa      = Color3.fromRGB(255, 40, 180),
+    neonRoxo      = Color3.fromRGB(160, 60, 255),
+    neonVerde     = Color3.fromRGB(0, 255, 160),
+    neonVermelho  = Color3.fromRGB(255, 60, 90),
+    neonAmarelo   = Color3.fromRGB(255, 220, 60),
+    texto         = Color3.fromRGB(240, 245, 255),
+    textoSuave    = Color3.fromRGB(160, 175, 200),
+}
+
+-- Hierarquia protegida
+local function getHierarchy()
+    if gethui then
+        local ok, h = pcall(gethui)
+        if ok and h then return h end
+    end
+    if get_hidden_gui then
+        local ok, h = pcall(get_hidden_gui)
+        if ok and h then return h end
+    end
+    return PlayerGui
+end
+
+-- Limpa antigas
+for _, nome in ipairs({"PlaceIDGUI", "PlaceIDToggleBtn"}) do
+    local a = PlayerGui:FindFirstChild(nome)
+    if a then a:Destroy() end
+end
+
+-- =========================================================
+-- Helpers de UI
+-- =========================================================
+local function addCorner(obj, r)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, r or 16)
+    c.Parent = obj
+    return c
+end
+
+local function addStroke(obj, color, thickness, transparency)
+    local s = Instance.new("UIStroke")
+    s.Color = color or COR.neonCiano
+    s.Thickness = thickness or 1.5
+    s.Transparency = transparency or 0
+    s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    s.Parent = obj
+    return s
+end
+
+-- Gradiente neon (aplicado em strokes/labels)
+local function addGradient(obj, c1, c2, c3, rotation)
+    local g = Instance.new("UIGradient")
+    g.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, c1),
+        ColorSequenceKeypoint.new(0.5, c2 or c1),
+        ColorSequenceKeypoint.new(1, c3 or c2 or c1),
+    })
+    g.Rotation = rotation or 45
+    g.Parent = obj
+    return g
+end
+
+-- Sombra realista (Frame escuro com blur via gradient)
+local function addShadow(parent, size, pos, corner)
+    local sh = Instance.new("Frame")
+    sh.Size = size
+    sh.Position = pos
+    sh.BackgroundColor3 = Color3.new(0, 0, 0)
+    sh.BackgroundTransparency = 0.35
+    sh.BorderSizePixel = 0
+    sh.ZIndex = parent.ZIndex - 1
+    sh.Parent = parent
+    addCorner(sh, corner or 20)
+    -- gradiente pra "suavizar" as bordas da sombra
+    local g = Instance.new("UIGradient")
+    g.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0),
+        NumberSequenceKeypoint.new(0.5, 0.7),
+        NumberSequenceKeypoint.new(1, 1),
+    })
+    g.Rotation = 90
+    g.Parent = sh
+    return sh
+end
+
+-- Reflexo de vidro (highlight superior)
+local function addGlassHighlight(parent)
+    local hl = Instance.new("Frame")
+    hl.Name = "GlassHighlight"
+    hl.Size = UDim2.new(1, -8, 0, 40)
+    hl.Position = UDim2.new(0, 4, 0, 4)
+    hl.BackgroundColor3 = Color3.new(1, 1, 1)
+    hl.BackgroundTransparency = 0.85
+    hl.BorderSizePixel = 0
+    hl.ZIndex = parent.ZIndex + 1
+    hl.Parent = parent
+    addCorner(hl, 14)
+    local g = Instance.new("UIGradient")
+    g.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.7),
+        NumberSequenceKeypoint.new(1, 1),
+    })
+    g.Rotation = 90
+    g.Parent = hl
+    return hl
+end
+
+-- "Glow" pulsante no stroke
+local function pulseStroke(stroke, c1, c2, speed)
+    local t = 0
+    local conn = RunService.Heartbeat:Connect(function(dt)
+        t = t + dt * (speed or 1)
+        local lerp = (math.sin(t) + 1) / 2
+        stroke.Color = c1:Lerp(c2, lerp)
+        stroke.Transparency = 0.2 + lerp * 0.5
+    end)
+    table.insert(conexoes, conn)
+    return conn
+end
+
+-- Botão neon padrão
+local function makeNeonButton(parent, txt, size, pos, baseColor, glowColor)
+    local btn = Instance.new("TextButton")
+    btn.Size = size
+    btn.Position = pos
+    btn.BackgroundColor3 = COR.fundoGlass
+    btn.BackgroundTransparency = 0.15
+    btn.BorderSizePixel = 0
+    btn.Text = txt
+    btn.TextColor3 = COR.texto
+    btn.TextScaled = true
+    btn.Font = Enum.Font.GothamBold
+    btn.AutoButtonColor = false
+    btn.Parent = parent
+    addCorner(btn, 12)
+
+    -- gradient interno sutil
+    local bg = Instance.new("UIGradient")
+    bg.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, baseColor),
+        ColorSequenceKeypoint.new(1, COR.fundoGlass),
+    })
+    bg.Transparency = NumberSequence.new(0.55)
+    bg.Rotation = 45
+    bg.Parent = btn
+
+    -- stroke neon
+    local stroke = addStroke(btn, glowColor, 2, 0.15)
+    addGradient(stroke, glowColor, baseColor, glowColor, 45)
+    pulseStroke(stroke, glowColor, baseColor, 1.5)
+
+    -- reflexo
+    local hl = Instance.new("Frame")
+    hl.Size = UDim2.new(1, -6, 0, 14)
+    hl.Position = UDim2.new(0, 3, 0, 3)
+    hl.BackgroundColor3 = Color3.new(1, 1, 1)
+    hl.BackgroundTransparency = 0.88
+    hl.BorderSizePixel = 0
+    hl.ZIndex = btn.ZIndex + 1
+    hl.Parent = btn
+    addCorner(hl, 8)
+
+    -- hover / click
+    btn.MouseEnter:Connect(function()
+        TweenService:Create(stroke, TweenInfo.new(0.25), {Transparency = 0}):Play()
+        TweenService:Create(btn, TweenInfo.new(0.25), {BackgroundTransparency = 0}):Play()
+    end)
+    btn.MouseLeave:Connect(function()
+        TweenService:Create(stroke, TweenInfo.new(0.25), {Transparency = 0.15}):Play()
+        TweenService:Create(btn, TweenInfo.new(0.25), {BackgroundTransparency = 0.15}):Play()
+    end)
+    btn.MouseButton1Down:Connect(function()
+        TweenService:Create(btn, TweenInfo.new(0.1), {
+            Size = UDim2.new(size.X.Scale, size.X.Offset - 4, size.Y.Scale, size.Y.Offset - 4)
+        }):Play()
+    end)
+    btn.MouseButton1Up:Connect(function()
+        TweenService:Create(btn, TweenInfo.new(0.15), {
+            Size = UDim2.new(size.X.Scale, size.X.Offset, size.Y.Scale, size.Y.Offset)
+        }):Play()
+    end)
+
+    return btn, stroke
+end
+
+-- =========================================================
+-- Cria GUI
+-- =========================================================
+local function criarGUI()
+    if ScreenGui and ScreenGui.Parent then return ScreenGui end
+
+    ScreenGui = Instance.new("ScreenGui")
+    ScreenGui.Name = "PlaceIDGUI"
+    ScreenGui.ResetOnSpawn = false
+    ScreenGui.IgnoreGuiInset = true
+    ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    ScreenGui.DisplayOrder = 999999
+    ScreenGui.Parent = getHierarchy()
+
+    -- ================= FRAME PRINCIPAL =================
+    local Frame = Instance.new("Frame")
+    Frame.Name = "MainFrame"
+    Frame.Size = UDim2.new(0, 340, 0, 260)
+    Frame.Position = UDim2.new(0.5, -170, 0.5, -130)
+    Frame.BackgroundColor3 = COR.fundoGlass
+    Frame.BackgroundTransparency = 0.08
+    Frame.BorderSizePixel = 0
+    Frame.Active = true
+    Frame.ClipsDescendants = false
+    Frame.Parent = ScreenGui
+    addCorner(Frame, 22)
+    addShadow(Frame, UDim2.new(1, 20, 1, 20), UDim2.new(0, -10, 0, -6), 26)
+
+    -- Gradiente interno (glass)
+    local fg = Instance.new("UIGradient")
+    fg.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(40, 45, 70)),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(22, 24, 38)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(15, 16, 26)),
+    })
+    fg.Rotation = 135
+    fg.Parent = Frame
+
+    -- Stroke neon animado (linha colorida)
+    local frameStroke = addStroke(Frame, COR.neonCiano, 2.5, 0.1)
+    local strokeGrad = Instance.new("UIGradient")
+    strokeGrad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, COR.neonCiano),
+        ColorSequenceKeypoint.new(0.33, COR.neonRosa),
+        ColorSequenceKeypoint.new(0.66, COR.neonRoxo),
+        ColorSequenceKeypoint.new(1, COR.neonCiano),
+    })
+    strokeGrad.Parent = frameStroke
+
+    -- Animação: gira o gradiente do stroke (efeito neon passando)
+    local t = 0
+    table.insert(conexoes, RunService.Heartbeat:Connect(function(dt)
+        t = t + dt * 90
+        strokeGrad.Rotation = t % 360
+        frameStroke.Transparency = 0.15 + math.sin(tick() * 2) * 0.15
+    end))
+
+    -- Reflexo de vidro no topo
+    addGlassHighlight(Frame)
+
+    -- ================= TÍTULO =================
+    local Titulo = Instance.new("TextLabel")
+    Titulo.Size = UDim2.new(1, -60, 0, 34)
+    Titulo.Position = UDim2.new(0, 16, 0, 10)
+    Titulo.BackgroundTransparency = 1
+    Titulo.Text = "⚡ CONECTAR POR JOBID"
+    Titulo.TextColor3 = COR.texto
+    Titulo.TextScaled = true
+    Titulo.Font = Enum.Font.GothamBlack
+    Titulo.TextXAlignment = Enum.TextXAlignment.Left
+    Titulo.ZIndex = Frame.ZIndex + 2
+    Titulo.Parent = Frame
+    local tg = Instance.new("UIGradient")
+    tg.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, COR.neonCiano),
+        ColorSequenceKeypoint.new(0.5, COR.neonRosa),
+        ColorSequenceKeypoint.new(1, COR.neonRoxo),
+    })
+    tg.Parent = Titulo
+
+    -- Linha neon embaixo do título
+    local linhaTitulo = Instance.new("Frame")
+    linhaTitulo.Size = UDim2.new(1, -32, 0, 1)
+    linhaTitulo.Position = UDim2.new(0, 16, 0, 46)
+    linhaTitulo.BackgroundColor3 = COR.neonCiano
+    linhaTitulo.BorderSizePixel = 0
+    linhaTitulo.ZIndex = Frame.ZIndex + 2
+    linhaTitulo.Parent = Frame
+    addGradient(linhaTitulo, COR.neonCiano, COR.neonRosa, COR.neonRoxo, 0)
+    local lg = linhaTitulo.UIGradient
+    lg.Transparency = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 1),
+        NumberSequenceKeypoint.new(0.5, 0),
+        NumberSequenceKeypoint.new(1, 1),
+    })
+
+    -- ================= BOTÃO FECHAR (X) =================
+    local FecharBtn = Instance.new("TextButton")
+    FecharBtn.Size = UDim2.new(0, 28, 0, 28)
+    FecharBtn.Position = UDim2.new(1, -38, 0, 12)
+    FecharBtn.BackgroundColor3 = COR.neonVermelho
+    FecharBtn.BackgroundTransparency = 0.35
+    FecharBtn.BorderSizePixel = 0
+    FecharBtn.Text = "✕"
+    FecharBtn.TextColor3 = COR.texto
+    FecharBtn.TextScaled = true
+    FecharBtn.Font = Enum.Font.GothamBlack
+    FecharBtn.AutoButtonColor = false
+    FecharBtn.ZIndex = Frame.ZIndex + 3
+    FecharBtn.Parent = Frame
+    addCorner(FecharBtn, 10)
+    local fxStroke = addStroke(FecharBtn, COR.neonVermelho, 2, 0.2)
+    pulseStroke(fxStroke, COR.neonVermelho, COR.neonRosa, 2)
+    FecharBtn.MouseEnter:Connect(function()
+        TweenService:Create(FecharBtn, TweenInfo.new(0.2), {BackgroundTransparency = 0}):Play()
+    end)
+    FecharBtn.MouseLeave:Connect(function()
+        TweenService:Create(FecharBtn, TweenInfo.new(0.2), {BackgroundTransparency = 0.35}):Play()
+    end)
+
+    -- ================= CAIXA DE TEXTO (JobId) =================
+    local CaixaTexto = Instance.new("TextBox")
+    CaixaTexto.Size = UDim2.new(1, -32, 0, 40)
+    CaixaTexto.Position = UDim2.new(0, 16, 0, 58)
+    CaixaTexto.BackgroundColor3 = Color3.fromRGB(8, 10, 18)
+    CaixaTexto.BackgroundTransparency = 0.15
+    CaixaTexto.BorderSizePixel = 0
+    CaixaTexto.TextColor3 = COR.texto
+    CaixaTexto.TextScaled = true
+    CaixaTexto.Font = Enum.Font.Gotham
+    CaixaTexto.PlaceholderText = "Cole o JobId do servidor..."
+    CaixaTexto.PlaceholderColor3 = COR.textoSuave
+    CaixaTexto.ClearTextOnFocus = false
+    CaixaTexto.ZIndex = Frame.ZIndex + 2
+    CaixaTexto.Parent = Frame
+    addCorner(CaixaTexto, 12)
+    addStroke(CaixaTexto, COR.neonCiano, 1.5, 0.5)
+
+    -- ================= BOTÃO CONECTAR =================
+    local BotaoConectar = makeNeonButton(
+        Frame,
+        "🚀  CONECTAR AO SERVIDOR",
+        UDim2.new(1, -32, 0, 46),
+        UDim2.new(0, 16, 0, 108),
+        COR.neonCiano,
+        COR.neonRoxo
+    )
+    BotaoConectar.ZIndex = Frame.ZIndex + 2
+
+    -- ================= BOTÃO COPIAR =================
+    local BotaoCopiar = makeNeonButton(
+        Frame,
+        "📋  COPIAR JOBID ATUAL",
+        UDim2.new(1, -32, 0, 38),
+        UDim2.new(0, 16, 0, 162),
+        COR.neonRosa,
+        COR.neonCiano
+    )
+    BotaoCopiar.ZIndex = Frame.ZIndex + 2
+
+    -- ================= STATUS =================
+    local StatusBg = Instance.new("Frame")
+    StatusBg.Size = UDim2.new(1, -32, 0, 34)
+    StatusBg.Position = UDim2.new(0, 16, 0, 208)
+    StatusBg.BackgroundColor3 = Color3.fromRGB(8, 10, 18)
+    StatusBg.BackgroundTransparency = 0.35
+    StatusBg.BorderSizePixel = 0
+    StatusBg.ZIndex = Frame.ZIndex + 2
+    StatusBg.Parent = Frame
+    addCorner(StatusBg, 10)
+    local sStroke = addStroke(StatusBg, COR.neonVerde, 1, 0.4)
+    addGradient(sStroke, COR.neonVerde, COR.neonCiano, COR.neonVerde, 0)
+
+    local Status = Instance.new("TextLabel")
+    Status.Size = UDim2.new(1, -16, 1, 0)
+    Status.Position = UDim2.new(0, 8, 0, 0)
+    Status.BackgroundTransparency = 1
+    Status.Text = "SISTEMA PRONTO"
+    Status.TextColor3 = COR.neonVerde
+    Status.TextScaled = true
+    Status.Font = Enum.Font.GothamBold
+    Status.TextXAlignment = Enum.TextXAlignment.Left
+    Status.ZIndex = StatusBg.ZIndex + 1
+    Status.Parent = StatusBg
+
+    local function setStatus(txt, cor)
+        Status.Text = txt
+        Status.TextColor3 = cor or COR.neonVerde
+        TweenService:Create(sStroke, TweenInfo.new(0.3), {Color = cor or COR.neonVerde}):Play()
+    end
+
+    -- ================= LÓGICA =================
+    local lastCopy = 0
+    local function resetBtnText(btn, txt, delay)
+        task.delay(delay, function()
+            if btn.Parent then btn.Text = txt end
+        end)
+    end
+
+    local function ConectarServidor(jobId)
+        jobId = (jobId or ""):gsub("%s", ""):gsub("%-", "")
+        if jobId == "" then
+            setStatus("❌  COLE UM JOBID VÁLIDO", COR.neonVermelho)
+            return
+        end
+
+        setStatus("🔄  CONECTANDO...", COR.neonAmarelo)
+
+        local conn
+        conn = TeleportService.TeleportInitFailed:Connect(function(_, result)
+            setStatus("❌  FALHA: " .. tostring(result):upper(), COR.neonVermelho)
+            if conn then conn:Disconnect() end
+        end)
+
+        local ok, err = pcall(function()
+            local opts = Instance.new("TeleportOptions")
+            TeleportService:TeleportToPlaceInstance(game.PlaceId, jobId, Player, opts)
+        end)
+
+        if ok then
+            setStatus("✅  TELEPORT INICIADO", COR.neonVerde)
+        else
+            setStatus("❌  ERRO: " .. tostring(err):upper(), COR.neonVermelho)
+            if conn then conn:Disconnect() end
+        end
+    end
+
+    BotaoConectar.MouseButton1Click:Connect(function()
+        ConectarServidor(CaixaTexto.Text)
+    end)
+
+    BotaoCopiar.MouseButton1Click:Connect(function()
+        if os.clock() - lastCopy < 1.6 then return end
+        lastCopy = os.clock()
+
+        if setclipboard then
+            pcall(setclipboard, game.JobId)
+            BotaoCopiar.Text = "✅  COPIADO!"
+            setStatus("📋  " .. game.JobId, COR.neonCiano)
+        else
+            BotaoCopiar.Text = "❌  SEM SUPORTE"
+            setStatus("❌  EXECUTOR SEM CLIPBOARD", COR.neonVermelho)
+        end
+        resetBtnText(BotaoCopiar, "📋  COPIAR JOBID ATUAL", 1.5)
+    end)
+
+    CaixaTexto.FocusLost:Connect(function(enter)
+        if enter then ConectarServidor(CaixaTexto.Text) end
+    end)
+
+    -- ================= DRAG =================
+    local dStart, dPos
+    Frame.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1
+        or i.UserInputType == Enum.UserInputType.Touch then
+            dStart = i.Position
+            dPos = Frame.Position
+        end
+    end)
+    UIS.InputChanged:Connect(function(i)
+        if dStart and (i.UserInputType == Enum.UserInputType.Touch
+        or i.UserInputType == Enum.UserInputType.MouseMovement) then
+            local d = i.Position - dStart
+            Frame.Position = UDim2.new(
+                dPos.X.Scale, dPos.X.Offset + d.X,
+                dPos.Y.Scale, dPos.Y.Offset + d.Y
+            )
+        end
+    end)
+    UIS.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.Touch
+        or i.UserInputType == Enum.UserInputType.MouseButton1 then
+            dStart = nil
+        end
+    end)
+
+    FecharBtn.MouseButton1Click:Connect(function()
+        if getgenv()._jobidDesativar then getgenv()._jobidDesativar() end
+    end)
+
+    return ScreenGui
+end
+
+-- =========================================================
+-- Botão flutuante ☰ (neon pulsante)
+-- =========================================================
+local function criarBotaoMobile()
+    if BotaoMobile and BotaoMobile.Parent then return end
+
+    BotaoMobile = Instance.new("TextButton")
+    BotaoMobile.Name = "PlaceIDToggleBtn"
+    BotaoMobile.Size = UDim2.new(0, 52, 0, 52)
+    BotaoMobile.Position = UDim2.new(0, 15, 0.5, -26)
+    BotaoMobile.BackgroundColor3 = Color3.fromRGB(20, 22, 38)
+    BotaoMobile.BackgroundTransparency = 0.05
+    BotaoMobile.BorderSizePixel = 0
+    BotaoMobile.Text = "☰"
+    BotaoMobile.TextColor3 = COR.neonCiano
+    BotaoMobile.TextScaled = true
+    BotaoMobile.Font = Enum.Font.GothamBlack
+    BotaoMobile.AutoButtonColor = false
+    BotaoMobile.ZIndex = 100
+    BotaoMobile.Parent = getHierarchy()
+    addCorner(BotaoMobile, 26)
+
+    -- Stroke neon animado (gradiente girando)
+    local st = addStroke(BotaoMobile, COR.neonCiano, 2.5, 0.1)
+    local g = Instance.new("UIGradient")
+    g.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, COR.neonCiano),
+        ColorSequenceKeypoint.new(0.5, COR.neonRosa),
+        ColorSequenceKeypoint.new(1, COR.neonRoxo),
+    })
+    g.Parent = st
+
+    local t = 0
+    table.insert(conexoes, RunService.Heartbeat:Connect(function(dt)
+        t = t + dt * 120
+        g.Rotation = t % 360
+    end))
+
+    -- Reflexo
+    local hl = Instance.new("Frame")
+    hl.Size = UDim2.new(1, -10, 0, 16)
+    hl.Position = UDim2.new(0, 5, 0, 5)
+    hl.BackgroundColor3 = Color3.new(1, 1, 1)
+    hl.BackgroundTransparency = 0.88
+    hl.BorderSizePixel = 0
+    hl.Parent = BotaoMobile
+    addCorner(hl, 8)
+
+    -- Drag
+    local dStart, dPos
+    BotaoMobile.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.Touch
+        or i.UserInputType == Enum.UserInputType.MouseButton1 then
+            dStart = i.Position
+            dPos = BotaoMobile.Position
+        end
+    end)
+    UIS.InputChanged:Connect(function(i)
+        if dStart and (i.UserInputType == Enum.UserInputType.Touch
+        or i.UserInputType == Enum.UserInputType.MouseMovement) then
+            local d = i.Position - dStart
+            BotaoMobile.Position = UDim2.new(
+                dPos.X.Scale, dPos.X.Offset + d.X,
+                dPos.Y.Scale, dPos.Y.Offset + d.Y
+            )
+        end
+    end)
+    UIS.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.Touch
+        or i.UserInputType == Enum.UserInputType.MouseButton1 then
+            dStart = nil
+        end
+    end)
+
+    BotaoMobile.MouseButton1Click:Connect(function()
+        if ScreenGui then ScreenGui.Enabled = not ScreenGui.Enabled end
+    end)
+end
+
+-- =========================================================
+-- Ativar / Desativar
+-- =========================================================
+local function AtivarGUI()
+    if guiAt
